@@ -29,4 +29,4 @@ jobs:
           git config --local user.name "GitHub Action"
           git add srazky_kbely.csv
           git commit -m "Automaticka aktualizace srazek" || echo "Zadne zmeny"
-          git push
+          git push origin HEAD:main
