@@ -2,8 +2,12 @@ name: Spustit srážkového agenta
 
 on:
   schedule:
-    - cron: '34 18 * * *'  # Spustí se sám každý večer kolem 19:34/20:34 našeho času
-  workflow_dispatch:      # Umožní spustit agenta ručně kdykoliv
+    - cron: '34 18 * * *'
+  workflow_dispatch:
+
+# TENTO BLOK NATVRDO DONUTÍ GITHUB DÁT ROBOTOVI PRÁVA ZÁPISU:
+permissions:
+  contents: write
 
 jobs:
   run-script:
