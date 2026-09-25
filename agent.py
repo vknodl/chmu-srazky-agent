@@ -64,7 +64,9 @@ def stahni_data():
         df_vysledne = df_nove
         
     df_vysledne = df_vysledne.sort_values(by="Datum")
-    df_vysledne.to_csv(OUTPUT_FILE, index=False, encoding="utf-8-sig")
+    # Převedeme desetinné tečky na čárky a uložíme se středníkem
+    df_vysledne['Srazky_mm'] = df_vysledne['Srazky_mm'].astype(str).str.replace('.', ',', regex=False)
+    df_vysledne.to_csv(OUTPUT_FILE, sep=';', index=False, encoding="utf-8-sig")
     print(f"Soubor {OUTPUT_FILE} byl úspěšně vytvořen s {len(df_vysledne)} řádky.")
 
 if __name__ == "__main__":
