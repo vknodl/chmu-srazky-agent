@@ -5,6 +5,9 @@ on:
     - cron: '34 18 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   run-script:
     runs-on: ubuntu-latest
@@ -23,9 +26,9 @@ jobs:
       - name: Spusteni skriptu
         run: python agent.py
 
-      # TENTO KROK BEZPEČNĚ ULOŽÍ SOUBOR JAKO ARTIFAKT
+      # TADY JSME UPRAVILI NÁZEV SOUBORU NA VŠECHNY STANICE:
       - name: Ulozeni vysledneho souboru
         uses: actions/upload-artifact@v4
         with:
-          name: srazky-kbely-csv
-          path: srazky_kbely.csv
+          name: srazky-vsechny-stanice-csv
+          path: srazky_vsechny_stanice.csv
