@@ -2,7 +2,7 @@ name: Spustit srážkového agenta
 
 on:
   schedule:
-    - cron: '34 18 * * *'
+    - cron: '15 7 * * *'
   workflow_dispatch:
 
 permissions:
@@ -12,37 +12,35 @@ jobs:
   run-script:
     runs-on: ubuntu-latest
     steps:
-      - name: Stazeni repozitare
-        uses: actions/checkout@v4
+      - name: Stažení repozitáře
+        uses: actions/checkout@v5
 
-      - name: Nastaveni Pythonu
-        uses: actions/setup-python@v5
+      - name: Nastavení Pythonu
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Instalace knihoven
-        run: pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt
 
-      - name: Spusteni skriptu
+      - name: Spuštění skriptu
         run: python agent.py
 
-      # TADY JSME UPRAVILI NÁZEV SOUBORU NA VŠECHNY STANICE:
-      - name: Ulozeni vysledneho souboru jako artefakt
+      - name: Uložení výsledného CSV jako artefaktu
         uses: actions/upload-artifact@v4
         with:
           name: srazky-vsechny-stanice-csv
           path: srazky_vsechny_stanice.csv
+          if-no-files-found: error
 
-      # DOPLNĚNO: bez tohoto kroku se výsledek nikdy neuložil zpátky do repozitáře,
-      # takže se historie mezi jednotlivými běhy vůbec neukládala.
-      - name: Ulozeni vysledku zpet do repozitare
+      - name: Uložení výsledku zpět do repozitáře
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add srazky_vsechny_stanice.csv
           if git diff --staged --quiet; then
-            echo "Zadna zmena k ulozeni."
+            echo "Žádná změna k uložení."
           else
-            git commit -m "Aktualizace srazkovych dat $(date -u +'%Y-%m-%d')"
+            git commit -m "Aktualizace srážkových dat $(date -u +'%Y-%m-%d')"
             git push
           fi
