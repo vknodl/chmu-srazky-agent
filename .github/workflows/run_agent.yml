@@ -5,18 +5,12 @@ on:
     - cron: '34 18 * * *'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   run-script:
     runs-on: ubuntu-latest
     steps:
       - name: Stazeni repozitare
         uses: actions/checkout@v4
-        with:
-          # Tento parametr zajistí, že robot stáhne celou historii a může zapisovat
-          fetch-depth: 0 
 
       - name: Nastaveni Pythonu
         uses: actions/setup-python@v5
@@ -29,13 +23,9 @@ jobs:
       - name: Spusteni skriptu
         run: python agent.py
 
-      - name: Ulozeni zmen na GitHub
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add srazky_kbely.csv
-          # Pokud se nic nezměnilo, robot nehodí chybu, ale v klidu skočí dál
-          git commit -m "Automaticka aktualizace srazek" || exit 0
-          
-          # TENTO PŘÍKAZ AUTOMATICKY ZJISTÍ NÁZEV TVÉ VĚTVE A NAHRÁJE DATA
-          git push https://${{ secrets.MOJ_TAJNY_KLIC }}@://github.com{{ github.repository }}.git HEAD
+      # TENTO KROK BEZPEČNĚ ULOŽÍ SOUBOR JAKO ARTIFAKT
+      - name: Ulozeni vysledneho souboru
+        uses: actions/upload-artifact@v4
+        with:
+          name: srazky-kbely-csv
+          path: srazky_kbely.csv
