@@ -1,73 +1,78 @@
 import os
 import requests
-import json
 import pandas as pd
 from datetime import datetime
-from bs4 import BeautifulSoup
 
-URL_WEB = "https://chmi.cz"
+# Společný JSON zdroj pro všechny stanice ČHMÚ
 URL_JSON = "https://chmi.cz"
-OUTPUT_FILE = "srazky_kbely.csv"
-STATION_ID = "P1PKBE01"
+OUTPUT_FILE = "srazky_vsechny_stanice.csv"
 
-def stahni_data():
-    nove_zaznamy = []
-    dnesni_datum = datetime.now().strftime("%Y-%m-%d")
-    
-    # POKUS 1: Zkusíme nejprve spolehlivější JSON API
+def stahni_vsechny_stanice_excel():
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         response = requests.get(URL_JSON, headers=headers, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            srazky_historie = data.get(STATION_ID, {}).get("srazky_6dni", [])
-            for zaznam in srazky_historie:
-                if zaznam.get("datum") and zaznam.get("hodnota") is not None:
-                    nove_zaznamy.append({
-                        "Datum": zaznam.get("datum"),
-                        "Srazky_mm": float(zaznam.get("hodnota"))
-                    })
-    except Exception as e:
-        print(f"JSON pokus selhal, zkouším záložní metodu: {e}")
-
-    # POKUS 2: Pokud JSON nedodal data, přečteme přímo HTML kód záložky na webu
-    if not nove_zaznamy:
-        try:
-            response = requests.get(URL_WEB, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Hledáme jakékoliv texty s daty a srážkami přímo v tabulkách komponenty ČHMÚ
-            tabulky = soup.find_all('table')
-            for tabulka in tabulky:
-                for radek in tabulka.find_all('tr'):
-                    bunky = [b.text.strip() for b in radek.find_all(['td', 'th'])]
-                    if len(bunky) >= 2 and ("202" in bunky[0] or "-" in bunky[0]):
-                        try:
-                            val = bunky[1].replace(',', '.').replace('mm', '').strip()
-                            nove_zaznamy.append({"Datum": bunky[0], "Srazky_mm": float(val)})
-                        except:
-                            continue
-        except Exception as e:
-            print(f"Záložní HTML pokus selhal: {e}")
-
-    # POKUS 3: Nouzový záchranný plán (vytvoříme řádek s dnešním datem, aby se vygeneroval soubor)
-    if not nove_zaznamy:
-        print("Data se nepodařilo z webu vyčíst, vytvářím nouzový záznam.")
-        nove_zaznamy = [{"Datum": dnesni_datum, "Srazky_mm": 0.0}]
-
-    # Zpracování a uložení tabulky
-    df_nove = pd.DataFrame(nove_zaznamy)
-    if os.path.exists(OUTPUT_FILE):
-        df_stare = pd.read_csv(OUTPUT_FILE)
-        df_vysledne = pd.concat([df_stare, df_nove]).drop_duplicates(subset=["Datum"], keep="last")
-    else:
-        df_vysledne = df_nove
+        response.raise_for_status()
         
-    df_vysledne = df_vysledne.sort_values(by="Datum")
-    # Převedeme desetinné tečky na čárky a uložíme se středníkem
-    df_vysledne['Srazky_mm'] = df_vysledne['Srazky_mm'].astype(str).str.replace('.', ',', regex=False)
-    df_vysledne.to_csv(OUTPUT_FILE, sep=';', index=False, encoding="utf-8-sig")
-    print(f"Soubor {OUTPUT_FILE} byl úspěšně vytvořen s {len(df_vysledne)} řádky.")
+        data = response.json()
+        docasny_seznam = []
+        
+        # 1. Projdeme všechny stanice a vytáhneme data
+        for station_id, station_content in data.items():
+            if isinstance(station_content, dict) and "nazev" in station_content:
+                nazev_stanice = station_content.get("nazev")
+                srazky_historie = station_content.get("srazky_6dni", [])
+                
+                for zaznam in srazky_historie:
+                    if zaznam.get("datum") and zaznam.get("hodnota") is not None:
+                        docasny_seznam.append({
+                            "Datum": zaznam.get("datum"),
+                            "Stanice": nazev_stanice,
+                            "Srazky": float(zaznam.get("hodnota"))
+                        })
+        
+        if not docasny_seznam:
+            print("Nepodařilo se načíst žádná data ze sítě ČHMÚ.")
+            return
+
+        df_surova = pd.DataFrame(docasny_seznam)
+        
+        # 2. Přeskládáme tabulku: Řádky = Dny, Sloupce = Stanice
+        df_nove = df_surova.pivot(index="Datum", columns="Stanice", values="Srazky").reset_index()
+        
+        # 3. Kontrola, zda už máme starší historii uloženou
+        if os.path.exists(OUTPUT_FILE):
+            try:
+                # Načteme starý soubor a vyčistíme české čárky zpět na tečky pro zpracování v Pythonu
+                df_stare = pd.read_csv(OUTPUT_FILE, sep=';', encoding="utf-8-sig")
+                for col in df_stare.columns:
+                    if col != "Datum":
+                        df_stare[col] = df_stare[col].astype(str).str.replace(',', '.', regex=False)
+                        df_stare[col] = pd.to_numeric(df_stare[col], errors='coerce')
+                
+                # Spojíme stará data s novými a aktualizujeme řádky podle data
+                df_vysledne = pd.concat([df_stare, df_nove]).drop_duplicates(subset=["Datum"], keep="last")
+            except Exception as e:
+                print(f"Nepodařilo se načíst staré CSV, vytvářím nové: {e}")
+                df_vysledne = df_nove
+        else:
+            df_vysledne = df_nove
+            
+        # Seřadíme tabulku chronologicky podle data
+        df_vysledne = df_vysledne.sort_values(by="Datum")
+        
+        # 4. ÚPRAVA PRO ČESKÝ EXCEL: Nahrazení desetinných teček za čárky
+        for col in df_vysledne.columns:
+            if col != "Datum":
+                # Převedeme na text, vyměníme tečku za čárku a prázdná místa ošetříme
+                df_vysledne[col] = df_vysledne[col].round(1).astype(str).str.replace('.', ',', regex=False)
+                df_vysledne[col] = df_vysledne[col].str.replace('nan', '0,0', regex=False)
+                
+        # Uložení se středníkem jako oddělovačem sloupců
+        df_vysledne.to_csv(OUTPUT_FILE, sep=';', index=False, encoding="utf-8-sig")
+        print(f"Hotovo! Tabulka byla uložena do {OUTPUT_FILE}")
+        
+    except Exception as e:
+        print(f"Chyba při běhu skriptu: {e}")
 
 if __name__ == "__main__":
-    stahni_data()
+    stahni_vsechny_stanice_excel()
