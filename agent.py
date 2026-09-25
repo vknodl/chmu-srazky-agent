@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 META_URL = "https://opendata.chmi.cz/meteorology/climate/now/metadata/meta1-{date}.json"
-DAILY_URL = "https://opendata.chmi.cz/meteorology/climate/recent/data/daily/dly-{wsi}-{yyyymm}.json"
+DAILY_INDEX_URL = "https://opendata.chmi.cz/meteorology/climate/recent/data/daily/{month}/"
+DAILY_URL = DAILY_INDEX_URL + "dly-{wsi}-{yyyymm}.json"
 
 OUTPUT_FILE = "srazky_vsechny_stanice.csv"
 HEADERS = {"User-Agent": "chmu-srazky-agent/3.0"}
@@ -104,8 +105,18 @@ def extract_sra(data):
     return result
 
 
+def get_available_wsi(yyyymm):
+    month = yyyymm[4:6]
+    url = DAILY_INDEX_URL.format(month=month)
+    response = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    response.raise_for_status()
+    import re
+    pattern = re.compile(r'href="dly-(.+)-' + yyyymm + r'\.json"')
+    return set(pattern.findall(response.text))
+
+
 def fetch_station(wsi, yyyymm):
-    url = DAILY_URL.format(wsi=wsi, yyyymm=yyyymm)
+    url = DAILY_URL.format(month=yyyymm[4:6], wsi=wsi, yyyymm=yyyymm)
     try:
         values = extract_sra(get_json(url))
         return wsi, values, None
@@ -139,6 +150,9 @@ def main():
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     yyyymm = today[:6]
 
+    available = get_available_wsi(yyyymm)
+    stations = [(wsi, name) for wsi, name in stations if wsi in available]
+    print(f"Našel jsem {len(stations)} stanic s denním souborem za {yyyymm}.")
     print(f"Stahuji denní SRA za {yyyymm} pro {len(stations)} stanic...")
 
     values_by_name = {}
