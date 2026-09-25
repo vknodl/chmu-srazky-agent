@@ -1,201 +1,301 @@
-import os
 import csv
-import time
-import requests
+import json
+import os
+import re
+import sys
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Oficiální otevřená data ČHMÚ (nahrazují starý neplatný zdroj "https://chmi.cz")
-# Popis formátu: https://opendata.chmi.cz/meteorology/climate/Klimatologicka_data_popis.pdf
-META_URL = "https://opendata.chmi.cz/meteorology/climate/now/metadata/meta1-{datum}.json"
-DATA_URL = "https://opendata.chmi.cz/meteorology/climate/now/data/1h-{wsi}-{datum}.json"
+import requests
+
+# Oficiální otevřená data ČHMÚ.
+# Dokumentace: https://opendata.chmi.cz/meteorology/climate/Klimatologicka_data_popis.pdf
+META_URL = "https://opendata.chmi.cz/meteorology/climate/now/metadata/meta1-{date}.json"
+DAILY_URL = "https://opendata.chmi.cz/meteorology/climate/recent/data/daily/dly-{wsi}-{yyyymm}.json"
 
 OUTPUT_FILE = "srazky_vsechny_stanice.csv"
-HEADERS = {"User-Agent": "Mozilla/5.0 (chmu-srazky-agent)"}
-TIMEOUT = 20
-POCET_VLAKEN = 20  # kolik stanic stahovat souběžně
+HEADERS = {"User-Agent": "chmu-srazky-agent/2.0"}
+TIMEOUT = 30
+MAX_WORKERS = 12
 
 
-def stahni_json(url):
-    """Stáhne a vrátí JSON z dané URL, nebo None, pokud se to nepovede (např. 404)."""
-    try:
-        odpoved = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        if odpoved.status_code != 200:
+def get_json(url):
+    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def walk(obj):
+    if isinstance(obj, dict):
+        yield obj
+        for value in obj.values():
+            yield from walk(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from walk(value)
+
+
+def get_station_list():
+    """Return [(WSI, station_name), ...] from CHMI meta1."""
+    today = datetime.now(timezone.utc).date()
+
+    for delta in range(0, 3):
+        date = (today - timedelta(days=delta)).strftime("%Y%m%d")
+        try:
+            data = get_json(META_URL.format(date=date))
+        except Exception as exc:
+            print(f"Metadata {date}: {exc}")
+            continue
+
+        stations = {}
+        for obj in walk(data):
+            wsi = obj.get("WSI")
+            name = obj.get("FULL_NAME") or obj.get("GH_ID")
+            if wsi and name:
+                stations[str(wsi)] = str(name).replace(";", " ").strip()
+
+        if stations:
+            print(f"Načteno {len(stations)} stanic z meta1-{date}.json")
+            return sorted(stations.items(), key=lambda x: x[1].lower())
+
+    raise RuntimeError("ČHMÚ meta1: nepodařilo se načíst seznam stanic.")
+
+
+def parse_number(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        s = value.strip().replace(",", ".")
+        if s in ("", "-", "--", "NA", "N/A", "null", "None"):
             return None
-        return odpoved.json()
-    except Exception:
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    return None
+
+
+def normalize_date(value):
+    if value is None:
         return None
 
+    if isinstance(value, (int, float)):
+        # nepovažujeme libovolné číslo za datum
+        return None
 
-def ziskej_seznam_stanic(datum_utc):
-    """Stáhne seznam stanic (WSI + název) z metadatového souboru meta1 pro dané datum (YYYYMMDD, UTC).
+    s = str(value).strip()
+    for pattern in (
+        r"^(\d{4})-(\d{2})-(\d{2})",
+        r"^(\d{4})(\d{2})(\d{2})",
+        r"^(\d{2})\.(\d{2})\.(\d{4})",
+    ):
+        m = re.match(pattern, s)
+        if m:
+            if pattern.startswith(r"^(\\d{2})"):
+                return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+            return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    return None
 
-    Pokud pro dnešní den ještě metadata nejsou k dispozici, zkusí to se včerejším datem.
+
+def extract_sra(data):
+    """Extract {YYYY-MM-DD: mm} from the many possible CHMI JSON layouts.
+
+    The official documentation guarantees the SRA element and file naming,
+    while this parser deliberately tolerates wrapper/layout changes.
     """
-    for datum in (datum_utc, (datetime.strptime(datum_utc, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")):
-        data = stahni_json(META_URL.format(datum=datum))
-        if isinstance(data, list) and data:
-            stanice = []
-            for zaznam in data:
-                if not isinstance(zaznam, dict):
+    result = {}
+
+    date_keys = {
+        "date", "datum", "date_meas", "date_measurement", "datetime",
+        "dt", "time", "timestamp", "date_time", "measurement_date"
+    }
+    value_keys = {"value", "hodnota", "val", "data", "result"}
+
+    def visit(obj, context_date=None):
+        if isinstance(obj, dict):
+            local_date = context_date
+            for k, v in obj.items():
+                if str(k).lower() in date_keys:
+                    d = normalize_date(v)
+                    if d:
+                        local_date = d
+
+            # Layout A: {"SRA": number} or {"SRA": {"value": number}}
+            for k, v in obj.items():
+                if str(k).upper() != "SRA":
                     continue
-                wsi = zaznam.get("WSI")
-                nazev = zaznam.get("FULL_NAME") or zaznam.get("GH_ID") or wsi
-                if wsi and nazev:
-                    stanice.append((wsi, str(nazev).replace(";", " ").strip()))
-            if stanice:
-                return stanice, datum
-    return [], datum_utc
+
+                n = parse_number(v)
+                if n is not None and local_date:
+                    result[local_date] = n
+                    continue
+
+                if isinstance(v, dict):
+                    n = None
+                    d = local_date
+                    for kk, vv in v.items():
+                        if str(kk).lower() in value_keys:
+                            n = parse_number(vv)
+                        if str(kk).lower() in date_keys:
+                            d = normalize_date(vv) or d
+                    if n is not None and d:
+                        result[d] = n
+                    visit(v, d)
+                elif isinstance(v, list):
+                    visit(v, local_date)
+
+            # Layout B: {"element": "SRA", "date": "...", "value": ...}
+            element = str(obj.get("element", obj.get("prvek", obj.get("EL_ABBREVIATION", "")))).upper()
+            if element == "SRA":
+                n = None
+                for k, v in obj.items():
+                    if str(k).lower() in value_keys:
+                        n = parse_number(v)
+                        if n is not None:
+                            break
+                if n is not None and local_date:
+                    result[local_date] = n
+
+            for v in obj.values():
+                if isinstance(v, (dict, list)):
+                    visit(v, local_date)
+
+        elif isinstance(obj, list):
+            for item in obj:
+                visit(item, context_date)
+
+    visit(data)
+    return result
 
 
-def extrahuj_sra1h(data):
-    """Z JSON dat hodinového souboru vytáhne a sečte hodnoty prvku SRA1H (hodinový úhrn srážek).
-
-    Formát JSON souborů opendata.chmi.cz není nikde zveřejněn jako přesné schéma na úrovni
-    jednotlivých záznamů, proto je parsování odolné vůči drobným odlišnostem ve struktuře.
-    """
-    celkem = 0.0
-    nalezeno = False
-
-    def zpracuj_zaznam(zaznam):
-        nonlocal celkem, nalezeno
-        if not isinstance(zaznam, dict):
-            return
-        je_sra1h = any(
-            isinstance(hodnota, str) and hodnota.strip().upper() == "SRA1H"
-            for hodnota in zaznam.values()
-        )
-        if not je_sra1h:
-            return
-        for klic, hodnota in zaznam.items():
-            if isinstance(hodnota, (int, float)) and "flag" not in klic.lower():
-                celkem += float(hodnota)
-                nalezeno = True
-                break
-
-    if isinstance(data, list):
-        for zaznam in data:
-            zpracuj_zaznam(zaznam)
-    elif isinstance(data, dict):
-        for klic, hodnota in data.items():
-            if isinstance(klic, str) and klic.strip().upper() == "SRA1H" and isinstance(hodnota, list):
-                for polozka in hodnota:
-                    if isinstance(polozka, dict):
-                        for k2, v2 in polozka.items():
-                            if isinstance(v2, (int, float)) and "flag" not in k2.lower():
-                                celkem += float(v2)
-                                nalezeno = True
-                                break
-                    elif isinstance(polozka, (int, float)):
-                        celkem += float(polozka)
-                        nalezeno = True
-            elif isinstance(hodnota, list):
-                for polozka in hodnota:
-                    zpracuj_zaznam(polozka)
-
-    return celkem if nalezeno else None
-
-
-def stahni_srazky_stanice(wsi, datum_utc):
-    data = stahni_json(DATA_URL.format(wsi=wsi, datum=datum_utc))
-    if data is None:
-        return None
-    return extrahuj_sra1h(data)
-
-
-def stahni_vsechny_stanice_final():
+def fetch_station(wsi, yyyymm):
+    url = DAILY_URL.format(wsi=wsi, yyyymm=yyyymm)
     try:
-        dnesni_datum = datetime.now().strftime("%Y-%m-%d")
-        datum_utc = datetime.now(timezone.utc).strftime("%Y%m%d")
+        data = get_json(url)
+        values = extract_sra(data)
+        return wsi, values, None
+    except Exception as exc:
+        return wsi, {}, str(exc)
 
-        seznam_stanic_wsi, pouzity_datum_utc = ziskej_seznam_stanic(datum_utc)
-        if not seznam_stanic_wsi:
-            print("Nepodařilo se načíst seznam stanic z otevřených dat ČHMÚ.")
-            return
 
-        nove_srazky_mapa = {}
-        vsechny_stanice_set = set()
+def read_history():
+    if not os.path.exists(OUTPUT_FILE):
+        return [], {}
 
-        with ThreadPoolExecutor(max_workers=POCET_VLAKEN) as executor:
-            budoucnosti = {
-                executor.submit(stahni_srazky_stanice, wsi, pouzity_datum_utc): nazev
-                for wsi, nazev in seznam_stanic_wsi
-            }
-            for budoucnost in as_completed(budoucnosti):
-                nazev_stanice = budoucnosti[budoucnost]
-                try:
-                    hodnota = budoucnost.result()
-                except Exception:
-                    hodnota = None
-                if hodnota is None:
-                    continue
-                # pokud stejný název stanice dorazí vícekrát, sečteme (mělo by být vzácné)
-                nove_srazky_mapa[nazev_stanice] = nove_srazky_mapa.get(nazev_stanice, 0.0) + hodnota
-                vsechny_stanice_set.add(nazev_stanice)
+    with open(OUTPUT_FILE, "r", encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f, delimiter=";"))
 
-        if not nove_srazky_mapa:
-            print("Nepodařilo se načíst žádná data o srážkách z otevřených dat ČHMÚ.")
-            return
+    if not rows:
+        return [], {}
 
-        print(f"Načteno {len(nove_srazky_mapa)} stanic se srážkovými daty.")
+    header = rows[0]
+    table = {}
+    for row in rows[1:]:
+        if row:
+            table[row[0]] = row
 
-        # Seřadíme stanice abecedně, aby sloupce v Excelu měly řád
-        seznam_stanic = sorted(list(vsechny_stanice_set))
-        hlavicka = ["Datum"] + seznam_stanic
+    return header, table
 
-        # Načteme dosavadní historii, pokud už soubor existuje
-        stara_historie_radky = {}
-        hlavicka_stara = []
-        if os.path.exists(OUTPUT_FILE):
-            try:
-                with open(OUTPUT_FILE, mode='r', encoding='utf-8-sig') as f:
-                    reader = csv.reader(f, delimiter=';')
-                    hlavicka_stara = next(reader, None)
-                    for radek in reader:
-                        if radek:
-                            den = radek[0]
-                            if den != dnesni_datum:
-                                stara_historie_radky[den] = radek
-            except Exception:
-                pass
 
-        # Spojíme staré dny a dnešní den dohromady
-        vsechny_dny = sorted(list(set(stara_historie_radky.keys()) | {dnesni_datum}))
-        nova_tabulka_zapis = []
+def fmt(value):
+    if value is None:
+        return ""
+    return f"{value:.1f}".replace(".", ",")
 
-        for den in vsechny_dny:
-            novy_radek = [den]
-            for stanice in seznam_stanic:
-                hodnota = 0.0
 
-                # 1. Zkusíme vzít čerstvou hodnotu ze stažených dat
-                if den == dnesni_datum and stanice in nove_srazky_mapa:
-                    hodnota = nove_srazky_mapa[stanice]
-                # 2. Pokud jde o starší historii, zkusíme ji vytáhnout ze starého souboru
-                elif den in stara_historie_radky and hlavicka_stara and stanice in hlavicka_stara:
-                    try:
-                        idx = hlavicka_stara.index(stanice)
-                        hodnota = float(stara_historie_radky[den][idx].replace(',', '.'))
-                    except Exception:
-                        hodnota = 0.0
+def main():
+    stations = get_station_list()
 
-                # ÚPRAVA PRO ČESKÝ EXCEL: zaokrouhlit na 1 desetinné místo a změnit tečku na čárku
-                text_hodnoty = str(round(hodnota, 1)).replace('.', ',')
-                novy_radek.append(text_hodnoty)
+    # We use the current month. The daily files contain all days from the
+    # beginning of the month through the previous completed day.
+    now = datetime.now()
+    yyyymm = now.strftime("%Y%m")
+    today = now.strftime("%Y-%m-%d")
 
-            nova_tabulka_zapis.append(novy_radek)
+    print(f"Stahuji denní SRA za {yyyymm} pro {len(stations)} stanic...")
 
-        # ZÁPIS DO SOUBORU SE STŘEDNÍKEM
-        with open(OUTPUT_FILE, mode='w', encoding='utf-8-sig', newline='') as f:
-            writer = csv.writer(f, delimiter=';')
-            writer.writerow(hlavicka)
-            writer.writerows(nova_tabulka_zapis)
+    values_by_name = {}
+    failures = 0
+    successful = 0
 
-        print("Úspěch! Všechny stanice byly zapsány.")
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        futures = {
+            pool.submit(fetch_station, wsi, yyyymm): (wsi, name)
+            for wsi, name in stations
+        }
 
-    except Exception as e:
-        print(f"Kritická chyba: {e}")
+        for future in as_completed(futures):
+            wsi, name = futures[future]
+            got_wsi, values, error = future.result()
+            if error:
+                failures += 1
+                print(f"  CHYBA {name} [{wsi}]: {error}")
+                continue
+
+            if values:
+                successful += 1
+                values_by_name[name] = values
+
+    print(f"Úspěšně načteno {successful} stanic; chyby/bez dat: {failures}.")
+
+    if not values_by_name:
+        raise RuntimeError("Z ČHMÚ se nepodařilo načíst žádné denní SRA.")
+
+    old_header, old_table = read_history()
+
+    # Keep all old columns and add new stations alphabetically.
+    old_stations = old_header[1:] if old_header else []
+    station_names = sorted(set(old_stations) | set(values_by_name), key=str.lower)
+
+    # Use all dates already present plus all dates returned by CHMI.
+    dates = set(old_table)
+    for station_values in values_by_name.values():
+        dates.update(station_values)
+
+    # Do not invent a value for today: CHMI's daily file is normally complete
+    # only through the previous day.
+    dates.discard(today)
+
+    if not dates:
+        raise RuntimeError("ČHMÚ vrátilo data, ale nepodařilo se z nich určit žádný den.")
+
+    new_rows = []
+    old_index = {name: i for i, name in enumerate(old_header)}
+
+    for date in sorted(dates):
+        row = [date]
+        old_row = old_table.get(date, [])
+
+        for station in station_names:
+            value = None
+
+            if station in values_by_name and date in values_by_name[station]:
+                value = values_by_name[station][date]
+            elif station in old_index and old_row:
+                idx = old_index[station]
+                if idx < len(old_row):
+                    value = parse_number(old_row[idx])
+
+            row.append(fmt(value))
+
+        new_rows.append(row)
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow(["Datum"] + station_names)
+        writer.writerows(new_rows)
+
+    print(
+        f"Hotovo: {OUTPUT_FILE}, {len(new_rows)} dnů × "
+        f"{len(station_names)} stanic."
+    )
 
 
 if __name__ == "__main__":
-    stahni_vsechny_stanice_final()
+    try:
+        main()
+    except Exception as exc:
+        print(f"KRITICKÁ CHYBA: {exc}")
+        sys.exit(1)
