@@ -1,0 +1,32 @@
+name: Spustit srážkového agenta
+
+on:
+  schedule:
+    - cron: '34 18 * * *'  # Spustí se sám každý večer kolem 19:34/20:34 našeho času
+  workflow_dispatch:      # Umožní spustit agenta ručně kdykoliv
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stazeni repozitare
+        uses: actions/checkout@v4
+
+      - name: Nastaveni Pythonu
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Instalace knihoven
+        run: pip install -r requirements.txt
+
+      - name: Spusteni skriptu
+        run: python agent.py
+
+      - name: Ulozeni zmen na GitHub
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add srazky_kbely.csv
+          git commit -m "Automaticka aktualizace srazek" || echo "Zadne zmeny"
+          git push
