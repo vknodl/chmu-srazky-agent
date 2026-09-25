@@ -1,4 +1,5 @@
 import csv
+import glob
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,6 +11,7 @@ META_URL = "https://opendata.chmi.cz/meteorology/climate/now/metadata/meta1-{dat
 DAILY_INDEX_URL = "https://opendata.chmi.cz/meteorology/climate/recent/data/daily/"
 DAILY_URL = DAILY_INDEX_URL + "dly-{wsi}-{yyyymm}.json"
 
+OUTPUT_PREFIX = "srazky_vsechny_stanice"
 OUTPUT_FILE = "srazky_vsechny_stanice.csv"
 HEADERS = {"User-Agent": "chmu-srazky-agent/3.0"}
 TIMEOUT = 30
@@ -124,10 +126,13 @@ def fetch_station(wsi, yyyymm):
 
 
 def read_history():
-    if not os.path.exists(OUTPUT_FILE):
+    # Use the newest dated CSV, with fallback to the original fixed filename.
+    candidates = sorted(glob.glob(OUTPUT_PREFIX + "_????-??-??.csv"), reverse=True)
+    source_file = candidates[0] if candidates else OUTPUT_FILE
+    if not os.path.exists(source_file):
         return [], {}
 
-    with open(OUTPUT_FILE, "r", encoding="utf-8-sig", newline="") as file:
+    with open(source_file, "r", encoding="utf-8-sig", newline="") as file:
         rows = list(csv.reader(file, delimiter=";"))
 
     if not rows:
@@ -193,6 +198,9 @@ def main():
     if not dates:
         raise RuntimeError("Nepodařilo se určit žádný uzavřený den srážkových dat.")
 
+    global OUTPUT_FILE
+    OUTPUT_FILE = OUTPUT_PREFIX + "_" + max(dates) + ".csv"
+
     old_index = {name: i for i, name in enumerate(old_header)}
     new_rows = []
 
@@ -216,6 +224,11 @@ def main():
         writer = csv.writer(file, delimiter=";")
         writer.writerow(["Datum"] + station_names)
         writer.writerows(new_rows)
+
+    # Keep only the latest named CSV in the repository.
+    for old_file in glob.glob(OUTPUT_PREFIX + "*.csv"):
+        if old_file != OUTPUT_FILE:
+            os.remove(old_file)
 
     print(f"Hotovo: {OUTPUT_FILE}, {len(new_rows)} dnů × {len(station_names)} stanic.")
 
