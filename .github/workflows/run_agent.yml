@@ -38,4 +38,4 @@ jobs:
           git commit -m "Automaticka aktualizace srazek" || exit 0
           
           # TENTO PŘÍKAZ AUTOMATICKY ZJISTÍ NÁZEV TVÉ VĚTVE A NAHRÁJE DATA
-          git push origin HEAD
+          git push https://${{ secrets.MOJ_TAJNY_KLIC }}@://github.com{{ github.repository }}.git HEAD
