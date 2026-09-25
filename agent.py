@@ -148,7 +148,7 @@ def fmt(value):
 def main():
     stations = get_station_list()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    yyyymm = today[:6]
+    yyyymm = datetime.now(timezone.utc).strftime("%Y%m")
 
     available = get_available_wsi(yyyymm)
     stations = [(wsi, name) for wsi, name in stations if wsi in available]
