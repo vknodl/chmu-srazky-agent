@@ -5,7 +5,6 @@ on:
     - cron: '34 18 * * *'
   workflow_dispatch:
 
-# TENTO BLOK NATVRDO DONUTÍ GITHUB DÁT ROBOTOVI PRÁVA ZÁPISU:
 permissions:
   contents: write
 
@@ -15,6 +14,9 @@ jobs:
     steps:
       - name: Stazeni repozitare
         uses: actions/checkout@v4
+        with:
+          # Tento parametr zajistí, že robot stáhne celou historii a může zapisovat
+          fetch-depth: 0 
 
       - name: Nastaveni Pythonu
         uses: actions/setup-python@v5
@@ -32,5 +34,8 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add srazky_kbely.csv
-          git commit -m "Automaticka aktualizace srazek" || echo "Zadne zmeny"
-          git push origin HEAD:main
+          # Pokud se nic nezměnilo, robot nehodí chybu, ale v klidu skočí dál
+          git commit -m "Automaticka aktualizace srazek" || exit 0
+          
+          # TENTO PŘÍKAZ AUTOMATICKY ZJISTÍ NÁZEV TVÉ VĚTVE A NAHRÁJE DATA
+          git push origin HEAD
