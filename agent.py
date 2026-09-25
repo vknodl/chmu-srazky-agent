@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 META_URL = "https://opendata.chmi.cz/meteorology/climate/now/metadata/meta1-{date}.json"
-DAILY_INDEX_URL = "https://opendata.chmi.cz/meteorology/climate/recent/data/daily/{month}/"
+DAILY_INDEX_URL = "https://opendata.chmi.cz/meteorology/climate/recent/data/daily/"
 DAILY_URL = DAILY_INDEX_URL + "dly-{wsi}-{yyyymm}.json"
 
 OUTPUT_FILE = "srazky_vsechny_stanice.csv"
@@ -106,8 +106,7 @@ def extract_sra(data):
 
 
 def get_available_wsi(yyyymm):
-    month = yyyymm[4:6]
-    url = DAILY_INDEX_URL.format(month=month)
+    url = DAILY_INDEX_URL
     response = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
     response.raise_for_status()
     import re
@@ -116,7 +115,7 @@ def get_available_wsi(yyyymm):
 
 
 def fetch_station(wsi, yyyymm):
-    url = DAILY_URL.format(month=yyyymm[4:6], wsi=wsi, yyyymm=yyyymm)
+    url = DAILY_URL.format(wsi=wsi, yyyymm=yyyymm)
     try:
         values = extract_sra(get_json(url))
         return wsi, values, None
