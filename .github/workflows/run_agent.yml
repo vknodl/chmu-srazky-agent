@@ -27,8 +27,22 @@ jobs:
         run: python agent.py
 
       # TADY JSME UPRAVILI NÁZEV SOUBORU NA VŠECHNY STANICE:
-      - name: Ulozeni vysledneho souboru
+      - name: Ulozeni vysledneho souboru jako artefakt
         uses: actions/upload-artifact@v4
         with:
           name: srazky-vsechny-stanice-csv
           path: srazky_vsechny_stanice.csv
+
+      # DOPLNĚNO: bez tohoto kroku se výsledek nikdy neuložil zpátky do repozitáře,
+      # takže se historie mezi jednotlivými běhy vůbec neukládala.
+      - name: Ulozeni vysledku zpet do repozitare
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add srazky_vsechny_stanice.csv
+          if git diff --staged --quiet; then
+            echo "Zadna zmena k ulozeni."
+          else
+            git commit -m "Aktualizace srazkovych dat $(date -u +'%Y-%m-%d')"
+            git push
+          fi
