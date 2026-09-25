@@ -43,7 +43,6 @@ def stahni_vsechny_stanice_excel():
         if os.path.exists(OUTPUT_FILE):
             try:
                 df_stare = pd.read_csv(OUTPUT_FILE, sep=';', encoding="utf-8-sig")
-                # Vyčistíme české čárky zpět na tečky pro spojení dat v Pandas
                 for col in df_stare.columns:
                     if col != "Datum":
                         df_stare[col] = df_stare[col].astype(str).str.replace(',', '.', regex=False)
@@ -51,7 +50,6 @@ def stahni_vsechny_stanice_excel():
                 
                 df_vysledne = pd.concat([df_stare, df_nove]).drop_duplicates(subset=["Datum"], keep="last")
             except Exception as e:
-                print(f"Staré CSV nebylo možné načíst, vytvářím čisté nové: {e}")
                 df_vysledne = df_nove
         else:
             df_vysledne = df_nove
@@ -63,7 +61,7 @@ def stahni_vsechny_stanice_excel():
         stanice_sloupce = sorted([c for c in df_vysledne.columns if c != "Datum"])
         df_vysledne = df_vysledne[["Datum"] + stanice_sloupce]
         
-        # 4. ÚPRAVA PRO ČESKÝ EXCEL: Nahrazení teček čárkami a ošetření chybějících hodnot
+        # 4. ÚPRAVA PRO ČESKÝ EXCEL: Nahrazení teček čárkami
         for col in df_vysledne.columns:
             if col != "Datum":
                 df_vysledne[col] = pd.to_numeric(df_vysledne[col], errors='coerce').round(1)
@@ -78,4 +76,4 @@ def stahni_vsechny_stanice_excel():
         print(f"Chyba při parsování dat: {e}")
 
 if __name__ == "__main__":
-    df = stahni_vsechny_stanice_excel()
+    stahni_vsechny_stanice_excel()
