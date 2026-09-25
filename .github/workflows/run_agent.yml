@@ -32,14 +32,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: srazky-vsechny-stanice-csv
-          path: srazky_vsechny_stanice.csv
+          path: 'srazky_vsechny_stanice*.csv'
           if-no-files-found: error
 
       - name: Uložení výsledku zpět do repozitáře
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add srazky_vsechny_stanice.csv
+          git add -A -- 'srazky_vsechny_stanice*.csv'
           if git diff --staged --quiet; then
             echo "Žádná změna k uložení."
           else
