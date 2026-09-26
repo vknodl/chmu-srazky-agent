@@ -99,13 +99,12 @@ def extract_sra(data):
         if str(row[idx["ELEMENT"]]).strip().upper() != "SRA":
             continue
 
-        value = parse_number(row[idx["VAL"]])
-        if value is None:
-            continue
-
         date = str(row[idx["DT"]]).strip()[:10]
         if len(date) == 10 and date[4] == "-" and date[7] == "-":
-            result[date] = value
+            # Datum evidujeme i při prázdné/nevalidní hodnotě SRA.
+            # ČHMÚ může mít nejnovější den již publikovaný, ale u
+            # konkrétní stanice zatím bez číselné hodnoty.
+            result[date] = parse_number(row[idx["VAL"]])
 
     return result
 
