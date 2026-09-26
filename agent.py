@@ -198,11 +198,26 @@ def main():
 
     # Název výstupu je vždy odvozen od nejnovějšího skutečně dostupného
     # uzavřeného dne, nikoli od data spuštění GitHub Actions.
-    latest_date = max(dates) if dates else None
-    if not latest_date:
+    latest_available_date = max(dates) if dates else None
+    if not latest_available_date:
         raise RuntimeError("Nepodařilo se určit žádný uzavřený den srážkových dat.")
 
-    print(f"Nejnovější uzavřený den srážkových dat: {latest_date}")
+    # Záměrně ponecháváme jednodenní rezervu, aby byl poslední den
+    # v CSV kompletně uzavřený a všechny stanice měly čas data doplnit.
+    target_date = (
+        datetime.fromisoformat(latest_available_date) - timedelta(days=1)
+    ).date().isoformat()
+
+    if target_date not in dates:
+        raise RuntimeError(
+            f"Po odečtení jednodenní rezervy není k dispozici datum {target_date}."
+        )
+
+    latest_date = target_date
+    print(
+        f"Nejnovější dostupný den: {latest_available_date}; "
+        f"poslední den v CSV s jednodenní rezervou: {latest_date}"
+    )
 
     global OUTPUT_FILE
     OUTPUT_FILE = OUTPUT_PREFIX + "_" + latest_date + ".csv"
