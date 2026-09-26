@@ -1,9 +1,11 @@
 import csv
 import glob
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -16,6 +18,7 @@ OUTPUT_FILE = "srazky_vsechny_stanice.csv"
 HEADERS = {"User-Agent": "chmu-srazky-agent/3.0"}
 TIMEOUT = 30
 MAX_WORKERS = 12
+PRAGUE_TZ = ZoneInfo("Europe/Prague")
 
 
 def get_json(url):
@@ -108,11 +111,9 @@ def extract_sra(data):
 
 
 def get_available_wsi(yyyymm):
-    url = DAILY_INDEX_URL
-    response = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    response = requests.get(DAILY_INDEX_URL, headers=HEADERS, timeout=TIMEOUT)
     response.raise_for_status()
-    import re
-    pattern = re.compile(r'href="dly-(.+)-' + yyyymm + r'\.json"')
+    pattern = re.compile(r'href="dly-(.+)-' + re.escape(yyyymm) + r'\.json"')
     return set(pattern.findall(response.text))
 
 
@@ -126,7 +127,6 @@ def fetch_station(wsi, yyyymm):
 
 
 def read_history():
-    # Use the newest dated CSV, with fallback to the original fixed filename.
     candidates = sorted(glob.glob(OUTPUT_PREFIX + "_????-??-??.csv"), reverse=True)
     source_file = candidates[0] if candidates else OUTPUT_FILE
     if not os.path.exists(source_file):
@@ -151,8 +151,9 @@ def fmt(value):
 
 def main():
     stations = get_station_list()
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    yyyymm = datetime.now(timezone.utc).strftime("%Y%m")
+    now_prague = datetime.now(PRAGUE_TZ)
+    current_date = now_prague.date().isoformat()
+    yyyymm = now_prague.strftime("%Y%m")
 
     available = get_available_wsi(yyyymm)
     stations = [(wsi, name) for wsi, name in stations if wsi in available]
@@ -193,13 +194,19 @@ def main():
     for station_values in values_by_name.values():
         dates.update(station_values)
 
-    dates.discard(today)
+    # Aktuální den není uzavřený a nesmí se použít jako poslední den srážek.
+    dates.discard(current_date)
 
-    if not dates:
+    # Název výstupu je vždy odvozen od nejnovějšího skutečně dostupného
+    # uzavřeného dne, nikoli od data spuštění GitHub Actions.
+    latest_date = max(dates) if dates else None
+    if not latest_date:
         raise RuntimeError("Nepodařilo se určit žádný uzavřený den srážkových dat.")
 
+    print(f"Nejnovější uzavřený den srážkových dat: {latest_date}")
+
     global OUTPUT_FILE
-    OUTPUT_FILE = OUTPUT_PREFIX + "_" + max(dates) + ".csv"
+    OUTPUT_FILE = OUTPUT_PREFIX + "_" + latest_date + ".csv"
 
     old_index = {name: i for i, name in enumerate(old_header)}
     new_rows = []
@@ -225,7 +232,6 @@ def main():
         writer.writerow(["Datum"] + station_names)
         writer.writerows(new_rows)
 
-    # Keep only the latest named CSV in the repository.
     for old_file in glob.glob(OUTPUT_PREFIX + "*.csv"):
         if old_file != OUTPUT_FILE:
             os.remove(old_file)
