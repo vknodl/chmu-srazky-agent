@@ -152,6 +152,23 @@ def get_station_list():
 
 
 # ---------------------------------------------------------------------------
+# VÝSTUPNÍ TABULKA STANIC
+# ---------------------------------------------------------------------------
+
+def write_station_mapping(stations):
+    """Zapíše převodní tabulku WSI kód -> název stanice."""
+
+    # Tento soubor slouží jako jednoduchá pomůcka pro přiřazení WSI kódů
+    # k názvům stanic. Samotný soubor se srážkami používá pouze WSI kódy.
+    with open("stanice.csv", "w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.writer(file, delimiter=";")
+        writer.writerow(["WSI", "Název stanice"])
+
+        for wsi, name in stations:
+            writer.writerow([wsi, name])
+
+
+# ---------------------------------------------------------------------------
 # PŘEVOD HODNOT NA ČÍSLA
 # ---------------------------------------------------------------------------
 
@@ -315,7 +332,7 @@ def main():
     # 1) Načteme seznam stanic a jejich názvy.
     stations = get_station_list()
 
-    # 2) Zjistíme aktuální datum a měsíc podle pražského času.
+    # 2) Vytvoříme aktuální převodní tabulku WSI kódů na názvy stanic.\n    write_station_mapping(stations)\n\n    # 2) Zjistíme aktuální datum a měsíc podle pražského času.
     now_prague = datetime.now(PRAGUE_TZ)
     current_date = now_prague.date().isoformat()
     yyyymm = now_prague.strftime("%Y%m")
