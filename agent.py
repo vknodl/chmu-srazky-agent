@@ -232,7 +232,7 @@ def get_available_wsi(yyyymm):
     response.raise_for_status()
 
     # Hledáme odkazy typu dly-IDENTIFIKATOR-202609.json.
-    pattern = re.compile(r'href="dly-(.+)-' + re.escape(yyyymm) + r'\\.json"')
+    pattern = re.compile(r'href="dly-(.+)-' + re.escape(yyyymm) + r'\.json"')
 
     # Vrátíme množinu WSI identifikátorů.
     return set(pattern.findall(response.text))
