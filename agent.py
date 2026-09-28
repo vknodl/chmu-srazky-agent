@@ -94,7 +94,7 @@ def get_table(data):
 # ---------------------------------------------------------------------------
 
 def get_station_list():
-    """Načte seznam stanic ČHMÚ a jejich názvy."""
+    """Načte seznam stanic ČHMÚ jako dvojice WSI kód -> název."""
 
     # Pro metadata nejprve použijeme dnešní datum v UTC.
     today = datetime.now(timezone.utc).date()
@@ -139,7 +139,7 @@ def get_station_list():
                 print(f"Načteno {len(stations)} stanic z meta1-{date}.json")
 
                 # Stanice seřadíme podle názvu, aby měly v CSV stabilní pořadí.
-                return sorted(stations.items(), key=lambda item: item[1].lower())
+                return sorted(stations.items(), key=lambda item: item[0])
 
             raise ValueError("meta1 neobsahuje žádné stanice.")
 
@@ -329,8 +329,9 @@ def main():
     print(f"Našel jsem {len(stations)} stanic s denním souborem za {yyyymm}.")
     print(f"Stahuji denní SRA za {yyyymm} pro {len(stations)} stanic...")
 
-    # Sem budeme ukládat data jednotlivých stanic podle názvu stanice.
-    values_by_name = {}
+    # Data ukládáme podle jednoznačného WSI kódu stanice.
+    # Název stanice zde vůbec nepoužíváme jako identifikátor.
+    values_by_wsi = {}
 
     # Počet stanic, u kterých se stahování nepovedlo.
     failures = 0
@@ -350,30 +351,46 @@ def main():
 
             if error:
                 failures += 1
-                print(f"  CHYBA {name} [{wsi}]: {error}")
+                print(f"  CHYBA [{wsi}] {name}: {error}")
                 continue
 
             # Stanici uložíme pouze tehdy, pokud z ní máme nějaká data.
             if values:
-                values_by_name[name] = values
+                values_by_wsi[wsi] = values
 
-    print(f"Úspěšně načteno {len(values_by_name)} stanic; chyby/bez dat: {failures}.")
+    print(f"Úspěšně načteno {len(values_by_wsi)} stanic; chyby/bez dat: {failures}.")
 
     # Pokud nemáme ani jednu stanici, nemá smysl vytvářet CSV.
-    if not values_by_name:
+    if not values_by_wsi:
         raise RuntimeError("Z ČHMÚ se nepodařilo načíst žádná denní data SRA.")
 
     # 5) Načteme předchozí CSV, pokud existuje.
     # Díky tomu zachováme starší dny a hodnoty, které nejsou v novém stažení.
     old_header, old_table = read_history()
-    old_stations = old_header[1:] if old_header else []
 
-    # Seznam stanic je sjednocený: staré stanice + nově stažené stanice.
-    station_names = sorted(set(old_stations) | set(values_by_name), key=str.lower)
+    # Výstupní sloupce tvoří pouze WSI kódy. Název stanice se do CSV nepíše.
+    station_codes = sorted({wsi for wsi, _ in stations} | set(values_by_wsi))
+
+    # Starší CSV obsahovalo názvy stanic. Při přechodu na WSI proto vytvoříme
+    # převod názvu -> WSI podle aktuálních metadat ČHMÚ.
+    name_to_wsi = {}
+    for wsi, name in stations:
+        name_to_wsi.setdefault(name, []).append(wsi)
+
+    # Starou historii převedeme z názvů sloupců na WSI kódy.
+    old_by_wsi = {}
+    if old_header:
+        for old_name_index, old_name in enumerate(old_header[1:], start=1):
+            matching_wsi = name_to_wsi.get(old_name, [])
+            if len(matching_wsi) == 1:
+                old_by_wsi[matching_wsi[0]] = old_name_index
+
+    # Při další práci už používáme pouze WSI kódy.
+    station_codes = sorted(set(station_codes))
 
     # 6) Zjistíme všechna data, která známe ze starého CSV i z nového stažení.
     dates = set(old_table)
-    for station_values in values_by_name.values():
+    for station_values in values_by_wsi.values():
         dates.update(station_values)
 
     # Aktuální den ještě není uzavřený, takže ho nikdy nepoužijeme.
@@ -409,8 +426,8 @@ def main():
     global OUTPUT_FILE
     OUTPUT_FILE = OUTPUT_PREFIX + "_" + latest_date + ".csv"
 
-    # 9) Připravíme mapu názvu stanice -> pořadí sloupce ve starém CSV.
-    old_index = {name: i for i, name in enumerate(old_header)}
+    # 9) Připravíme mapu WSI -> pořadí sloupce ve starém CSV.
+    old_index = old_by_wsi
 
     new_rows = []
 
@@ -424,9 +441,9 @@ def main():
         old_row = old_table.get(date, [])
         row = [date]
 
-        for station in station_names:
-            # Nejprve použijeme aktuálně staženou hodnotu.
-            value = values_by_name.get(station, {}).get(date)
+        for station in station_codes:
+            # Nejprve použijeme aktuálně staženou hodnotu podle WSI.
+            value = values_by_wsi.get(station, {}).get(date)
 
             # Pokud ji aktuální stažení nemá, zkusíme staré CSV.
             # To je důležité pro zachování dříve známých hodnot.
@@ -443,7 +460,7 @@ def main():
     # utf-8-sig pomáhá Excelu správně poznat UTF-8 a české znaky.
     with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline="") as file:
         writer = csv.writer(file, delimiter=";")
-        writer.writerow(["Datum"] + station_names)
+        writer.writerow(["Datum"] + station_codes)
         writer.writerows(new_rows)
 
     # 11) Smažeme staré verze CSV.
@@ -452,7 +469,7 @@ def main():
         if old_file != OUTPUT_FILE:
             os.remove(old_file)
 
-    print(f"Hotovo: {OUTPUT_FILE}, {len(new_rows)} dnů × {len(station_names)} stanic.")
+    print(f"Hotovo: {OUTPUT_FILE}, {len(new_rows)} dnů × {len(station_codes)} stanic.")
 
 
 # Tato část se spustí pouze tehdy, když soubor agent.py spustíme přímo.
