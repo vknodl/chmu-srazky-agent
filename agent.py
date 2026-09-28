@@ -416,6 +416,11 @@ def main():
 
     new_rows = []
 
+    # Do CSV zařadíme pouze dny do zvoleného cílového data.
+    # Tím zabráníme tomu, aby se do souboru s názvem například
+    # 2026-09-26 omylem dostal i novější den 2026-09-27.
+    dates = {date for date in dates if date <= latest_date}
+
     # Projdeme všechna dostupná data chronologicky.
     for date in sorted(dates):
         old_row = old_table.get(date, [])
