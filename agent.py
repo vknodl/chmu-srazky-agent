@@ -379,27 +379,25 @@ def main():
     # Aktuální den ještě není uzavřený, takže ho nikdy nepoužijeme.
     dates.discard(current_date)
 
-    # 7) Najdeme nejnovější dostupný uzavřený den.
-    # Tento den ještě nemusí být kompletní pro všechny stanice.
+    # 7) Určíme pevné cílové datum podle dnešního data.
+    # Pokud je dnes 28. 9., CSV má končit 27. 9.
+    # Neodvozujeme tedy název souboru od toho, jaké datum se náhodou
+    # podařilo stáhnout jako nejnovější z jednotlivých stanic.
     latest_available_date = max(dates) if dates else None
 
     if not latest_available_date:
-        raise RuntimeError("Nepodařilo se určit žádný uzavřený den srážkových dat.")
+        raise RuntimeError("Nepodařilo se načíst žádná data srážek.")
 
-    # 8) Záměrně odečteme jeden den.
-    # Např. nejnovější dostupný den = 25. 9. -> CSV končí 24. 9.
-    # Tím získáme jednodenní rezervu na doplnění dat ze všech stanic.
-    target_date = (
-        datetime.fromisoformat(latest_available_date) - timedelta(days=1)
-    ).date().isoformat()
+    # CSV vždy obsahuje data pouze do včerejška.
+    # Tím máme přesně jednodenní rezervu na doplnění dnešních dat.
+    target_date = (now_prague.date() - timedelta(days=1)).isoformat()
+    latest_date = target_date
 
-    # Pokud tento den v datech vůbec není, raději skončíme s chybou.
+    # Požadovaný den musí být mezi načtenými daty nebo ve starší historii.
     if target_date not in dates:
         raise RuntimeError(
-            f"Po odečtení jednodenní rezervy není k dispozici datum {target_date}."
+            f"Data pro požadovaný den {target_date} zatím nejsou k dispozici."
         )
-
-    latest_date = target_date
 
     print(
         f"Nejnovější dostupný den: {latest_available_date}; "
