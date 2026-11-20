@@ -1,12 +1,15 @@
-name: Spustit srážkového agenta
+name: Srážky – Praha-Kbely
 
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: '15 9 * * *'
       timezone: 'Europe/Prague'
   workflow_dispatch:
+
+# Zabrání souběžným běhům, které dříve způsobovaly odmítnutí git push.
+concurrency:
+  group: srazky-kbely
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -17,6 +20,8 @@ jobs:
     steps:
       - name: Stažení repozitáře
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Nastavení Pythonu
         uses: actions/setup-python@v6
@@ -26,24 +31,27 @@ jobs:
       - name: Instalace knihoven
         run: python -m pip install -r requirements.txt
 
-      - name: Spuštění skriptu
+      - name: Kontrola syntaxe
+        run: python -m py_compile agent.py
+
+      - name: Stažení srážek pro Prahu-Kbely
         run: python agent.py
 
-      - name: Uložení výsledného CSV jako artefaktu
+      - name: Uložení CSV jako artefaktu
         uses: actions/upload-artifact@v4
         with:
-          name: srazky-vsechny-stanice-csv
-          path: 'srazky_vsechny_stanice*.csv'
+          name: srazky-praha-kbely
+          path: srazky_kbely_praha.csv
           if-no-files-found: error
 
-      - name: Uložení výsledku zpět do repozitáře
+      - name: Uložení výsledku do repozitáře
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A -- 'srazky_vsechny_stanice*.csv'
+          git add srazky_kbely_praha.csv
           if git diff --staged --quiet; then
             echo "Žádná změna k uložení."
           else
-            git commit -m "Aktualizace srážkových dat $(date -u +'%Y-%m-%d')"
+            git commit -m "Aktualizace srážek Praha-Kbely $(date -u +'%Y-%m-%d')"
             git push
           fi
