@@ -11,14 +11,15 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# Praha-Kbely, WMO 11518 – pevně zvolená stanice, bez načítání metadat.
-STATION_WSI = "0-20000-0-11518"
-STATION_NAME = "Praha-Kbely"
+# Stanice ČHMÚ – WSI (WIGOS Station Identifier) a samostatné výstupní CSV.
+STATIONS = [
+    {"name": "Praha-Kbely", "wsi": "0-20000-0-11518", "output": "srazky_kbely_praha.csv"},
+    {"name": "Praha-Libuš", "wsi": "0-20000-0-11520", "output": "srazky_libus_praha.csv"},
+]
 DAILY_URL = (
     "https://opendata.chmi.cz/meteorology/climate/recent/data/daily/"
-    f"dly-{STATION_WSI}-{{yyyymm}}.json"
+    "dly-{wsi}-{yyyymm}.json"
 )
-OUTPUT_FILE = "srazky_kbely_praha.csv"
 OLD_FILE_PATTERN = "srazky_vsechny_stanice_????-??-??.csv"
 PRAGUE_TZ = ZoneInfo("Europe/Prague")
 TIMEOUT = (10, 45)
@@ -55,8 +56,8 @@ def parse_number(value):
         return None
 
 
-def download_month(session, yyyymm):
-    url = DAILY_URL.format(yyyymm=yyyymm)
+def download_month(session, wsi, yyyymm):
+    url = DAILY_URL.format(wsi=wsi, yyyymm=yyyymm)
     response = session.get(url, timeout=TIMEOUT)
     response.raise_for_status()
     payload = response.json()
@@ -92,18 +93,18 @@ def download_month(session, yyyymm):
     return result
 
 
-def read_history():
-    """Načte novou historii, případně převezme sloupec Kbel ze starého CSV."""
+def read_history(output_file, station_wsi):
+    """Načte historii z výstupního CSV nebo příslušnou stanici ze starého CSV."""
     candidates = []
-    if os.path.exists(OUTPUT_FILE):
-        candidates.append(OUTPUT_FILE)
+    if os.path.exists(output_file):
+        candidates.append(output_file)
     candidates.extend(sorted(glob.glob(OLD_FILE_PATTERN), reverse=True))
 
     for path in candidates:
         try:
             with open(path, "r", encoding="utf-8-sig", newline="") as file:
                 first_line = file.readline()
-                delimiter = "\t" if "\t" in first_line else ";"
+                delimiter = "\\t" if "\\t" in first_line else ";"
                 file.seek(0)
                 rows = list(csv.reader(file, delimiter=delimiter))
             if not rows:
@@ -111,9 +112,10 @@ def read_history():
 
             header = rows[0]
             date_index = header.index("Datum") if "Datum" in header else 0
-            if STATION_WSI in header:
-                value_index = header.index(STATION_WSI)
-            elif "SRA_mm" in header:
+            if station_wsi in header:
+                value_index = header.index(station_wsi)
+            elif output_file == "srazky_kbely_praha.csv" and "SRA_mm" in header:
+                # Zachová kompatibilitu se stávajícím samostatným CSV Kbel.
                 value_index = header.index("SRA_mm")
             else:
                 continue
@@ -137,55 +139,51 @@ def read_history():
     return {}
 
 
-def main():
-    today = datetime.now(PRAGUE_TZ).date()
-    yesterday = today - timedelta(days=1)
+def update_station(session, station, yesterday):
+    name = station["name"]
+    wsi = station["wsi"]
+    output_file = station["output"]
     target_day = yesterday.isoformat()
     # Stahuje se měsíc cílového měření, nikoli měsíc aktuálního spuštění.
-    # Díky tomu funguje správně i první den v měsíci.
     yyyymm = yesterday.strftime("%Y%m")
 
-    print(f"Stanice: {STATION_NAME} ({STATION_WSI})")
+    print(f"\\nStanice: {name} ({wsi})")
     print(f"Stahuji denní SRA za {target_day} z ČHMÚ (soubor {yyyymm}).")
+    downloaded = download_month(session, wsi, yyyymm)
 
-    session = create_session()
-    try:
-        downloaded = download_month(session, yyyymm)
-    finally:
-        session.close()
-
-    # Bez skutečné hodnoty za včerejší den se nesmí vytvořit ani uložit
-    # neúplný výstup. Chybějící údaj se nesmí tvářit jako úspěšná aktualizace.
     if target_day not in downloaded:
         raise RuntimeError(
-            f"ČHMÚ zatím neposkytuje denní záznam SRA za {target_day}. "
-            "CSV nebylo změněno."
+            f"ČHMÚ zatím neposkytuje denní záznam SRA za {target_day} "
+            f"pro stanici {name}. Soubor {output_file} nebyl změněn."
         )
     if downloaded[target_day] is None:
         raise RuntimeError(
-            f"ČHMÚ má pro {target_day} záznam SRA, ale bez číselné hodnoty. "
-            "CSV nebylo změněno."
+            f"ČHMÚ má pro {target_day} záznam SRA bez číselné hodnoty "
+            f"pro stanici {name}. Soubor {output_file} nebyl změněn."
         )
 
-    history = read_history()
+    history = read_history(output_file, wsi)
 
-    # Platné nové hodnoty aktualizují historii; prázdná hodnota
-    # nepřepíše dříve známé měření.
+    # Aktualizují se všechny dostupné hodnoty v aktuálním měsíčním souboru.
+    # Prázdná hodnota nepřepíše dříve známé měření.
     for day, value in downloaded.items():
         if value is not None:
             history[day] = value
         else:
             history.setdefault(day, None)
 
-    history = {day: value for day, value in history.items() if day <= yesterday.isoformat()}
+    history = {day: value for day, value in history.items() if day <= target_day}
     if not history:
-        raise RuntimeError("Do včerejšího dne nejsou k dispozici žádná data. CSV nebylo změněno.")
+        raise RuntimeError(
+            f"Do včerejšího dne nejsou k dispozici žádná data pro {name}. "
+            f"Soubor {output_file} nebyl změněn."
+        )
 
     first_day = min(date.fromisoformat(day) for day in history)
     last_day = max(date.fromisoformat(day) for day in history)
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline="") as file:
-        writer = csv.writer(file, delimiter="\t", lineterminator="\n")
+    with open(output_file, "w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.writer(file, delimiter="\\t", lineterminator="\\n")
         writer.writerow(["Datum", "SRA_mm"])
         day = first_day
         while day <= last_day:
@@ -194,7 +192,17 @@ def main():
             writer.writerow([key, "" if value is None else f"{value:.1f}"])
             day += timedelta(days=1)
 
-    print(f"Hotovo: {OUTPUT_FILE}; {last_day.isoformat()}, {len(history)} známých dnů.")
+    print(f"Hotovo: {output_file}; {last_day.isoformat()}, {len(history)} známých dnů.")
+
+
+def main():
+    yesterday = datetime.now(PRAGUE_TZ).date() - timedelta(days=1)
+    session = create_session()
+    try:
+        for station in STATIONS:
+            update_station(session, station, yesterday)
+    finally:
+        session.close()
 
 
 if __name__ == "__main__":
