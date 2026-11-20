@@ -140,16 +140,32 @@ def read_history():
 def main():
     today = datetime.now(PRAGUE_TZ).date()
     yesterday = today - timedelta(days=1)
-    yyyymm = today.strftime("%Y%m")
+    target_day = yesterday.isoformat()
+    # Stahuje se měsíc cílového měření, nikoli měsíc aktuálního spuštění.
+    # Díky tomu funguje správně i první den v měsíci.
+    yyyymm = yesterday.strftime("%Y%m")
 
     print(f"Stanice: {STATION_NAME} ({STATION_WSI})")
-    print(f"Stahuji denní SRA za {yyyymm} z ČHMÚ.")
+    print(f"Stahuji denní SRA za {target_day} z ČHMÚ (soubor {yyyymm}).")
 
     session = create_session()
     try:
         downloaded = download_month(session, yyyymm)
     finally:
         session.close()
+
+    # Bez skutečné hodnoty za včerejší den se nesmí vytvořit ani uložit
+    # neúplný výstup. Chybějící údaj se nesmí tvářit jako úspěšná aktualizace.
+    if target_day not in downloaded:
+        raise RuntimeError(
+            f"ČHMÚ zatím neposkytuje denní záznam SRA za {target_day}. "
+            "CSV nebylo změněno."
+        )
+    if downloaded[target_day] is None:
+        raise RuntimeError(
+            f"ČHMÚ má pro {target_day} záznam SRA, ale bez číselné hodnoty. "
+            "CSV nebylo změněno."
+        )
 
     history = read_history()
 
