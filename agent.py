@@ -104,7 +104,7 @@ def read_history(output_file, station_wsi):
         try:
             with open(path, "r", encoding="utf-8-sig", newline="") as file:
                 first_line = file.readline()
-                delimiter = "\\t" if "\\t" in first_line else ";"
+                delimiter = "\t" if "\t" in first_line else ";"
                 file.seek(0)
                 rows = list(csv.reader(file, delimiter=delimiter))
             if not rows:
