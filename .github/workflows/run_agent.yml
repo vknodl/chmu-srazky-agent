@@ -1,4 +1,4 @@
-name: Srážky – Praha-Kbely
+name: Srážky – Praha-Kbely a Praha-Libuš
 
 on:
   push:
@@ -14,7 +14,7 @@ on:
 
 # Zabrání souběžným běhům, které dříve způsobovaly odmítnutí git push.
 concurrency:
-  group: srazky-kbely
+  group: srazky-praha
   cancel-in-progress: false
 
 permissions:
@@ -40,21 +40,23 @@ jobs:
       - name: Kontrola syntaxe
         run: python -m py_compile agent.py
 
-      - name: Stažení srážek pro Prahu-Kbely
+      - name: Stažení srážek pro Prahu-Kbely a Prahu-Libuš
         run: python agent.py
 
       - name: Uložení CSV jako artefaktu
         uses: actions/upload-artifact@v4
         with:
-          name: srazky-praha-kbely
-          path: srazky_kbely_praha.csv
+          name: srazky-praha-kbely-a-libus
+          path: |
+            srazky_kbely_praha.csv
+            srazky_libus_praha.csv
           if-no-files-found: error
 
       - name: Uložení výsledku do repozitáře
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add srazky_kbely_praha.csv
+          git add srazky_kbely_praha.csv srazky_libus_praha.csv
           if git diff --staged --quiet; then
             echo "Žádná změna k uložení."
           else
