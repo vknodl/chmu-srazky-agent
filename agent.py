@@ -183,7 +183,7 @@ def update_station(session, station, yesterday):
     last_day = max(date.fromisoformat(day) for day in history)
 
     with open(output_file, "w", encoding="utf-8-sig", newline="") as file:
-        writer = csv.writer(file, delimiter="\\t", lineterminator="\\n")
+        writer = csv.writer(file, delimiter="\t", lineterminator="\n")
         writer.writerow(["Datum", "SRA_mm"])
         day = first_day
         while day <= last_day:
