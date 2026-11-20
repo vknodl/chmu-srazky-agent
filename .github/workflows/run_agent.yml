@@ -1,6 +1,12 @@
 name: Srážky – Praha-Kbely
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent.py'
+      - 'requirements.txt'
+      - '.github/workflows/run_agent.yml'
   schedule:
     - cron: '15 9 * * *'
       timezone: 'Europe/Prague'
